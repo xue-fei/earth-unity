@@ -40,7 +40,7 @@ public class MapLayer : MonoBehaviour
         this.mapType = mapType;
         this.material = material;
         this.renderQueueAdd = renderQueueAdd;
-        tempMapPath = Application.dataPath + "/../TempMap/";
+        tempMapPath = Application.persistentDataPath + "/tempMap/";
         switch (mapChannel)
         {
             case MapChannel.ArcGIS:
@@ -323,6 +323,7 @@ public class MapLayer : MonoBehaviour
                         File.WriteAllBytesAsync(savePath, webRequest.downloadHandler.data);
                     }
                 }
+                webRequest.Dispose();
             }
             else
             {

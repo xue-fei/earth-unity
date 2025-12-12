@@ -1,14 +1,10 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Security.Policy;
-using Unity.EditorCoroutines.Editor;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.Networking;
 
 public class MapCacheWindow : EditorWindow
 {
@@ -32,7 +28,7 @@ public class MapCacheWindow : EditorWindow
         mapWindow = (MapCacheWindow)EditorWindow.GetWindow(typeof(MapCacheWindow), false, "地图缓存工具", true);
         mapWindow.Show();
 
-        tempMapPath = Application.dataPath + "/../TempMap/";
+        tempMapPath = Application.persistentDataPath + "/tempMap/";
 
         channelStrings.Clear();
         channelStrings = Enum.GetNames(typeof(MapChannel)).ToList();
@@ -91,13 +87,6 @@ public class MapCacheWindow : EditorWindow
             EarthStart();
             EditorUtility.ClearProgressBar();
         }
-
-        //if (GUILayout.Button("测试"))
-        //{
-        //    EditorCoroutineRunner.StartEditorCoroutine(
-        //        GetTexture("http://wprd03.is.autonavi.com/appmaptile?style=6&x=15&y=15&z=5", 
-        //        Application.dataPath + "/../test1.jpg"));
-        //}
     }
 
     public void EarthStart()
@@ -131,9 +120,8 @@ public class MapCacheWindow : EditorWindow
                     if (!File.Exists(path))
                     {
                         Debug.Log("文件不存在：" + path);
-                        WebClient webClient = new WebClient();
+                        using WebClient webClient = new WebClient();
                         webClient.DownloadFile(url, path);
-                        //EditorCoroutineRunner.StartEditorCoroutine(GetTexture(url, path));
                     }
                     else
                     {
@@ -146,7 +134,7 @@ public class MapCacheWindow : EditorWindow
 
     /// <summary>
     /// 返回细分参数
-    /// </summary>
+    /// </summary> 
     /// <param name="level">层级</param>
     /// <param name="subdivisions">分段</param>
     /// <param name="unitlongiAngle">经度单位角度</param>
@@ -158,30 +146,5 @@ public class MapCacheWindow : EditorWindow
         unitlongiAngle = (360.00000000000d / (subdivisions * 1.000000d));
         //Debug.Log(unitlongiAngle);
         halfSubdivisions = subdivisions * 0.500000d;
-    }
-
-    IEnumerator GetTexture(string url, string path)
-    {
-        Debug.Log("开始下载：" + url);
-        using (var webRequest = UnityWebRequestTexture.GetTexture(url))
-        {
-            webRequest.certificateHandler = new WebRequestSkipCertificate();
-            webRequest.timeout = 5000;
-            yield return webRequest.SendWebRequest();
-            while(!webRequest.isDone)
-            {
-                yield return null;
-            }
-            if (webRequest.result == UnityWebRequest.Result.ConnectionError || webRequest.result == UnityWebRequest.Result.ProtocolError)
-            {
-                Debug.Log(webRequest.error);
-            }
-            else
-            {
-                Texture2D texture2D = DownloadHandlerTexture.GetContent(webRequest);
-                File.WriteAllBytes(path, texture2D.EncodeToJPG());
-                Debug.Log("下载完成：" + url);
-            }
-        }
     }
 }
