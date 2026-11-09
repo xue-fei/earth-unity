@@ -40,7 +40,9 @@ public class MapLayer : MonoBehaviour
     [Tooltip("同时在途的网络请求数。WebGL 浏览器同域连接数约 6，不要调太高。")]
     public int maxConcurrentRequests = 6;
     [Tooltip("本图层常驻的瓦片上限，超出后按 LRU 销毁 GameObject / Mesh / Material / Texture。")]
-    public int maxCachedTiles = 256;
+    public int maxCachedTiles = 1024;
+    [Tooltip("单次视野请求的瓦片数上限（安全阀）。按屏幕视锥计算正常只用几十块，异常配置时自动降层。")]
+    public int maxVisibleTiles = 900;
     [Tooltip("等待队列上限，超出时丢弃最旧的请求（保住新视野）。")]
     public int maxPendingTiles = 4096;
     [Tooltip("单个瓦片失败后的重试次数。")]
@@ -95,8 +97,8 @@ public class MapLayer : MonoBehaviour
         layer = new GameObject(mapType.ToString());
         layer.transform.parent = earth.transform;
 
-        EarthStart(MinLevel);
-
+        // 不再全量预载最低层：任何层级都只按当前可见球冠请求瓦片，且只显示一层。
+        // 固定常驻 L5 底图会让高缩放时视野边缘露出低清影像，滚轮一动就"跳图"。
         if (!workersStarted)
         {
             workersStarted = true;
@@ -126,22 +128,20 @@ public class MapLayer : MonoBehaviour
         lruNodes.Clear();
     }
 
-    // Update is called once per frame
+    // 相机动画（定位/切渠道）期间没有鼠标输入，只在输入时刷新会漏掉视野变化。
+    // CamerPosToMap 只做字典查找与 LRU Touch，逐帧调用开销可控。
     void FixedUpdate()
     {
         if (mainCamera == null)
         {
             return;
         }
-        if (Input.GetMouseButton(0) || Input.GetAxis("Mouse ScrollWheel") != 0)
-        {
-            CamerPosToMap();
-        }
+        CamerPosToMap();
     }
 
     /// <summary>
-    /// 通过相机位置调取地图。
-    /// 反解与 Earth.GeoToPoint 严格互逆，索引采用标准 WebMercator XYZ（x=col 向东，y=row 向南）。
+    /// 按屏幕视锥覆盖的地表范围请求「当前层级」的瓦片。
+    /// 层级由高度映射，另设瓦片数预算作为安全阀。只显示单层，不用最低层做常驻底图。
     /// </summary>
     void CamerPosToMap()
     {
@@ -153,38 +153,119 @@ public class MapLayer : MonoBehaviour
         }
 
         // GeoToPoint: x=-r*cosLat*cosLon, y=r*sinLat, z=-r*cosLat*sinLon
-        double lon = Math.Atan2(-p.z, -p.x) * 180.0 / Math.PI;   // [-180,180]，带符号，不再折叠东西经
+        double lon = Math.Atan2(-p.z, -p.x) * 180.0 / Math.PI;   // [-180,180]，带符号
         double sinLat = Math.Max(-1.0, Math.Min(1.0, p.y / mag));
         double lat = Math.Asin(sinLat) * 180.0 / Math.PI;
 
-        NowLevel = altitudeToZoom((float)(mag - Earth.radius) * 10000f);
-        NowLevel = Mathf.Clamp(NowLevel, MinLevel, MaxLevel);
+        // 用屏幕视锥打到球面的边缘，而不是几何可见球冠 acos(R/d)。
+        // 贴地时球冠 0.7°、屏幕却只有 0.002°：按球冠请求会把预算撑爆，
+        // 被迫逐级降层到 12 级，高缩放永远看不到细节。
+        double viewRadius = ScreenViewRadiusDeg(mag);
 
-        int n = 1 << NowLevel;
-        double lon01 = (lon + 180.0) / 360.0;                    // 0=西经180°，1=东经180°
-        double latRad = lat * Math.PI / 180.0;
-        // 极区钳制到 WebMercator 有效范围，避免 log(tan(π/2)) 溢出
-        latRad = Math.Max(-85.05112878 * Math.PI / 180.0,
-                 Math.Min(85.05112878 * Math.PI / 180.0, latRad));
-        double y01 = 0.5 - Math.Log(Math.Tan(Math.PI * 0.25 + latRad * 0.5)) / (2.0 * Math.PI);
-
-        int col = Mathf.Clamp((int)(lon01 * n), 0, n - 1);
-        int row = Mathf.Clamp((int)(y01 * n), 0, n - 1);
-
-        int length = Mathf.Max(1, (int)Math.Sqrt(NowLevel));
-        for (int i = -length; i < length; i++)
+        int level = Mathf.Clamp(altitudeToZoom((float)(mag - Earth.radius) * 10000f), MinLevel, MaxLevel);
+        int rowMin, rowMax, colMin, colMax;
+        long tiles = ComputeVisibleRange(level, lon, lat, viewRadius,
+                                        out rowMin, out rowMax, out colMin, out colMax);
+        while (level > MinLevel && tiles > maxVisibleTiles)
         {
-            for (int j = -length; j < length; j++)
+            level--;
+            tiles = ComputeVisibleRange(level, lon, lat, viewRadius,
+                                        out rowMin, out rowMax, out colMin, out colMax);
+        }
+
+        NowLevel = level;
+
+        int n = 1 << Mathf.Clamp(level, 0, 30);
+        int col = Mathf.Clamp((int)((lon + 180.0) / 360.0 * n), 0, n - 1);
+        int row = Mathf.Clamp((int)(LatToMercatorY01(lat) * n), 0, n - 1);
+
+        // 视线中心先入队并保持在队首，缩放后中央最先出图；ReadMap 自带去重。
+        const int inner = 2;
+        for (int r = Mathf.Max(0, row - inner); r <= Mathf.Min(n - 1, row + inner); r++)
+        {
+            for (int c = col - inner; c <= col + inner; c++)
             {
-                int r = row + j;
-                if (r < 0 || r >= n)
-                {
-                    continue;                     // 纬度不环绕，极区外没有瓦片
-                }
-                int c = ((col + i) % n + n) % n;  // 经度环绕，跨日期线时请求对侧瓦片
-                ReadMap(r, c, NowLevel, true);
+                ReadMap(r, WrapCol(c, n), level, true);
             }
         }
+
+        // 再按可见包围盒补齐视野内其余瓦片，数量受预算约束。
+        int queued = 0;
+        for (int r = rowMin; r <= rowMax && queued < maxVisibleTiles; r++)
+        {
+            for (int c = colMin; c <= colMax && queued < maxVisibleTiles; c++)
+            {
+                ReadMap(r, WrapCol(c, n), level, false);
+                queued++;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 屏幕视锥边缘射线打到球面后，相对星下点的地心角（度）。
+    /// 相机恒看向地心（position = rotation * (0,0,-d)）。设 u=d/R、β=屏幕对角半角：
+    ///   射线与球相交：α = asin(u·sinβ) − β
+    ///   射线擦过球外：地平线落在屏幕内，需覆盖整个可见球冠 α = acos(1/u)
+    /// 两式在 u·sinβ = 1 处连续（均为 90°−β）。
+    /// </summary>
+    double ScreenViewRadiusDeg(double mag)
+    {
+        double u = mag / Earth.radius;
+        float aspect = mainCamera.aspect > 0.01f ? mainCamera.aspect : 1.777f;
+        double tanHalfFov = Math.Tan(mainCamera.fieldOfView * 0.5 * Math.PI / 180.0);
+        double beta = Math.Atan(tanHalfFov * Math.Sqrt(1.0 + (double)aspect * aspect));
+        double sinB = Math.Sin(beta);
+        if (u * sinB >= 1.0)
+        {
+            return Math.Acos(Math.Min(1.0, 1.0 / u)) * 180.0 / Math.PI;
+        }
+        // 相机贴球面时 α→0；钳到 0 防止浮点误差产生负半径
+        return Math.Max(0.0, (Math.Asin(u * sinB) - beta) * 180.0 / Math.PI);
+    }
+
+    static int WrapCol(int c, int n)
+    {
+        return ((c % n) + n) % n;
+    }
+
+    /// <summary>WebMercator 归一化 y（0=最北，1=最南），极区钳制到 ±85.05112878°。</summary>
+    static double LatToMercatorY01(double latDeg)
+    {
+        double r = Math.Max(-85.05112878, Math.Min(85.05112878, latDeg)) * Math.PI / 180.0;
+        return 0.5 - Math.Log(Math.Tan(Math.PI * 0.25 + r * 0.5)) / (2.0 * Math.PI);
+    }
+
+    /// <summary>
+    /// 以 (lon,lat) 为中心、viewRadiusDeg 为地心角半径的球面区域，在指定层级
+    /// 覆盖的瓦片行列范围，返回瓦片总数。
+    /// 列号为未环绕的连续值（可能为负或 >= n），由 WrapCol 处理跨日期线。
+    /// </summary>
+    static long ComputeVisibleRange(int level, double lon, double lat, double viewRadiusDeg,
+                                    out int rowMin, out int rowMax, out int colMin, out int colMax)
+    {
+        int n = 1 << Mathf.Clamp(level, 0, 30);
+        double sinR = Math.Sin(viewRadiusDeg * Math.PI / 180.0);
+        double cosLat = Math.Cos(lat * Math.PI / 180.0);
+        // 区域含极点时经度覆盖整圈，否则按球面几何求最大经度偏离
+        double dlon = (cosLat <= sinR) ? 180.0 :
+                      Math.Asin(Math.Min(1.0, sinR / cosLat)) * 180.0 / Math.PI;
+
+        rowMin = Mathf.Clamp((int)(LatToMercatorY01(lat + viewRadiusDeg) * n), 0, n - 1);
+        rowMax = Mathf.Clamp((int)(LatToMercatorY01(lat - viewRadiusDeg) * n), 0, n - 1);
+        if (rowMax < rowMin)
+        {
+            rowMax = rowMin;
+        }
+
+        colMin = (int)Math.Floor((lon - dlon + 180.0) / 360.0 * n);
+        colMax = (int)Math.Ceiling((lon + dlon + 180.0) / 360.0 * n);
+        if (colMax - colMin + 1 >= n)
+        {
+            colMin = 0;
+            colMax = n - 1;
+        }
+
+        return (long)(rowMax - rowMin + 1) * (colMax - colMin + 1);
     }
 
     int altitudeToZoom(float altitude)
@@ -223,12 +304,13 @@ public class MapLayer : MonoBehaviour
             }
             if (value != nowLevel)
             {
-                // 层级已经拉远/拉近后，排队中的过期层级请求不再有意义
+                // 只显示当前层。固定常驻 MinLevel 底图会让高缩放视野边缘露出低清
+                // 影像（滚轮时"跳"出 L5 图案），多层同时贴同一球面还会交错重叠。
                 LinkedListNode<TileRequest> node = pending.First;
                 while (node != null)
                 {
                     LinkedListNode<TileRequest> next = node.Next;
-                    if (node.Value.level < value - 1)
+                    if (node.Value.level != value)
                     {
                         pendingKeys.Remove(node.Value.key);
                         pendingNodes.Remove(node.Value.key);
@@ -239,38 +321,12 @@ public class MapLayer : MonoBehaviour
 
                 foreach (var item in MapFas)
                 {
-                    long i = Math.Abs(value - item.Key);
-                    if (i > 1)
-                    {
-                        item.Value.SetActive(false);
-                    }
-                    else
-                    {
-                        item.Value.SetActive(true);
-                    }
-                    //item.Value.SetActive(item.Key == value);
+                    item.Value.SetActive(item.Key == value);
                 }
                 nowLevel = value;
             }
         }
     }
-
-    #region 地球顶点创建
-
-    public void EarthStart(int level)
-    {
-        int n = 1 << level;
-        NowLevel = level;
-        for (int col = 0; col < n; col++)
-        {
-            for (int row = 0; row < n; row++)
-            {
-                ReadMap(row, col, level);
-            }
-        }
-    }
-
-    #endregion
 
     #region 请求队列
 
@@ -293,7 +349,7 @@ public class MapLayer : MonoBehaviour
     }
 
     /// <summary>
-    /// 已在队列中的视野瓦片提到队首（EarthStart 全量入队时它排在很后面）。
+    /// 把仍在队列中的视野中心瓦片提到队首（CamerPosToMap 逐帧调用，缩放时优先出图）。
     /// </summary>
     void Promote(string key)
     {
@@ -319,6 +375,15 @@ public class MapLayer : MonoBehaviour
             TileRequest req = pending.First.Value;
             pending.RemoveFirst();
             pendingNodes.Remove(req.key);
+
+            // 切层后已出队但尚未下载的请求直接丢弃，避免把旧层瓦片挂到
+            // 已隐藏的分组下、并占用 LRU 名额。
+            if (req.level != nowLevel)
+            {
+                pendingKeys.Remove(req.key);
+                continue;
+            }
+
             // pendingKeys 在整个请求（含重试）期间保留，防止同一瓦片重复入队
             yield return LoadTile(req);
             pendingKeys.Remove(req.key);
@@ -492,6 +557,7 @@ public class MapLayer : MonoBehaviour
 
     void EvictIfNeeded()
     {
+        // 视野内瓦片每帧被 Touch 移到队首，离场/旧层的自然落到队尾被回收。
         while (mapDic.Count > maxCachedTiles && lruOrder.Count > 0)
         {
             string key = lruOrder.Last.Value;
