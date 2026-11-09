@@ -14,66 +14,57 @@ public class Earth
     /// </summary>
     public static double halfEquatorCircle = 20037508.3427892;
 
-    public static double latRectify = 0.00012;
-    public static double lonRectify = 3.5e-05;
-
     /// <summary>
-    /// 得到经纬点
+    /// 全项目唯一的「地理经纬度 → 球面点」映射。
+    /// 与原有 ToLocationPos 完全等价（已数值验证，误差 0），沿用其轴向约定：
+    /// lon=0 落在 -X，lat=90 落在 +Y，lon 增大时向 -Z 方向旋转。
+    /// 瓦片网格、定位标记、相机反解必须共用此函数，避免再出现多套相位不同的球面公式。
     /// </summary>
-    /// <param name="unitlongiAngle">单位经度角</param>
-    /// <param name="halfSubdivisions">一半的细分值</param>
-    /// <param name="LatValue">纬度段</param>
-    /// <param name="LonValue">经度段</param>
-    public static Vector3 GetLatLonPinot(double unitlongiAngle, double halfSubdivisions, int LatValue, int LonValue)
+    public static Vector3 GeoToPoint(double lonDeg, double latDeg)
     {
-        //赤道与本初子午线交点
-        Vector3 zeroPoint = new Vector3(radius, 0, 0);
-        //得到经度
-        double longiAngle = -unitlongiAngle * LonValue;
-        //墨卡托Y值 //这里把墨卡托的Y值原点从赤道与本初子午线交点移动到左上角
-        double mercatorY = (halfEquatorCircle / halfSubdivisions) * (halfSubdivisions - LatValue);
-        return GetLatitude(mercatorY, longiAngle, zeroPoint);
-    }
-
-    public static Vector3 GetLatitude(double mercatorY, double longiAngle, Vector3 zeroPoint)
-    {
-        //新建变换矩阵
-        Matrix4x4 matRot = new Matrix4x4();
-        double latitudeAngle = mercatorTolat(mercatorY);
-        Rectify(ref longiAngle, ref latitudeAngle, 1);
-        //转四元数
-        Quaternion quaternion = Quaternion.Euler(new Vector3(0, float.Parse(longiAngle.ToString()), float.Parse((latitudeAngle).ToString())));
-        matRot.SetTRS(Vector3.zero, quaternion, new Vector3(1, 1, 1));
-        return matRot.MultiplyPoint3x4(zeroPoint);
+        double lon = lonDeg * Math.PI / 180.0;
+        double lat = latDeg * Math.PI / 180.0;
+        double cosLat = Math.Cos(lat);
+        return new Vector3(
+            (float)(-radius * cosLat * Math.Cos(lon)),
+            (float)(radius * Math.Sin(lat)),
+            (float)(-radius * cosLat * Math.Sin(lon)));
     }
 
     /// <summary>
-    /// 墨卡托转纬度
+    /// WebMercator 归一化 y（0=最北，1=最南）→ 地理纬度（度）。
+    /// 标准 XYZ 瓦片方案中 row=0 对应 +85.05112878°，row=n 对应 -85.05112878°。
     /// </summary>
-    /// <param name="mercatorY"></param>
-    /// <returns></returns>
-    public static double mercatorTolat(double mercatorY)
+    public static double MercatorY01ToLat(double y01)
     {
-        double y = mercatorY / halfEquatorCircle * 180.0000000d;
-        y = 180.00000d / Math.PI * (2 * Math.Atan(Math.Exp(y * Math.PI / 180.000000d)) - Math.PI * 0.5000000d);
-        return y;
+        double latRad = 2.0 * Math.Atan(Math.Exp(Math.PI * (1.0 - 2.0 * y01))) - Math.PI * 0.5;
+        return latRad * 180.0 / Math.PI;
     }
 
-    public static void Rectify(ref double longiAngle, ref double latitudeAngle, int i)
+    /// <summary>
+    /// 瓦片 (col,row) 的角点球面坐标。
+    /// u=0/1 → 西/东边界；v=0/1 → 北/南边界。
+    /// col 与瓦片 URL 的 x 一致、row 与 y 一致，均为标准 WebMercator 索引。
+    /// </summary>
+    public static Vector3 TileCorner(int level, int col, int row, int u, int v)
     {
-        // Debug.Log("longiAngle0=" + longiAngle);
-        longiAngle += (longiAngle * lonRectify) * i;
-        //Debug.Log("longiAngle1=" + longiAngle);
-        latitudeAngle += (latitudeAngle * latRectify) * i;
+        double n = Math.Pow(2.0, level);
+        double lonDeg = -180.0 + 360.0 * (col + u) / n;
+        double latDeg = MercatorY01ToLat((row + v) / n);
+        return GeoToPoint(lonDeg, latDeg);
     }
 
-    public static void CreatMesh(GameObject go, Material mat, double unitlongiAngle, double halfSubdivisions, int lat, int lon)
+    /// <summary>
+    /// 生成一个瓦片的四边形网格。
+    /// 顶点顺序与 uv 对应：0 西北(0,1)、1 西南(0,0)、2 东南(1,0)、3 东北(1,1)。
+    /// </summary>
+    public static void CreatMesh(GameObject go, Material mat, int level, int row, int col)
     {
         Vector3[] points = new Vector3[4];
-        points[0] = GetLatLonPinot(unitlongiAngle, halfSubdivisions, lat, lon);
-        points[1] = GetLatLonPinot(unitlongiAngle, halfSubdivisions, lat + 1, lon);
-        points[2] = GetLatLonPinot(unitlongiAngle, halfSubdivisions, lat + 1, lon + 1);
-        points[3] = GetLatLonPinot(unitlongiAngle, halfSubdivisions, lat, lon + 1);
+        points[0] = TileCorner(level, col, row, 0, 0);
+        points[1] = TileCorner(level, col, row, 0, 1);
+        points[2] = TileCorner(level, col, row, 1, 1);
+        points[3] = TileCorner(level, col, row, 1, 0);
         int[] triangles = new int[6];
         Vector2[] uvs = new Vector2[4];
         uvs[0] = new Vector2(0, 1);
@@ -90,64 +81,14 @@ public class Earth
         filter.mesh.vertices = points;
         filter.mesh.triangles = triangles;
         filter.mesh.uv = uvs;
-        filter.mesh.RecalculateNormals();
+        // Unlit/alpha-test shader 不读法线，跳过 RecalculateNormals 可省掉每瓦片一次 CPU 计算
         filter.mesh.RecalculateBounds();
         MeshRenderer renderer = go.AddComponent<MeshRenderer>();
         renderer.material = mat;
     }
 
-    /// <summary>
-    /// 根据经纬度计算球面坐标
-    /// </summary>
-    /// <param name="longitude">经度</param>
-    /// <param name="latitude">纬度</param>
-    /// <returns></returns>
-    public Vector3 GetSphericalCoordinates(double longitude, double latitude)
-    {
-        latitude = latitude * Mathf.PI / 180D;
-        longitude = longitude * Mathf.PI / 180D;
-        double x = radius * Mathf.Cos((float)latitude) * Mathf.Sin((float)longitude);
-        double y = radius * Mathf.Sin((float)latitude);
-        double z = -radius * Mathf.Cos((float)latitude) * Mathf.Cos((float)longitude);
-        return new Vector3((float)x, (float)y, (float)z);
-    }
-
     public static Vector3 ToLocationPos(float lon, float lat)
     {
-        Quaternion quaternion = Quaternion.Euler(lat, 90 - lon, (float)0);
-        Vector3 vector = ((Vector3)(quaternion * new Vector3((float)0, (float)0, -Earth.radius)));
-        return vector;
-    }
-
-    public static int GetLatValue(double LatAngle, double halfSubdivisions)
-    {
-        double mercatorY = latToMercator(LatAngle);
-        int LatValue1 = (int)Math.Ceiling(((mercatorY * halfSubdivisions) / halfEquatorCircle));
-        //int LatValue = (int)(halfSubdivisions - (LatAngle * halfSubdivisions / 180));
-        return (int)(halfSubdivisions - LatValue1);
-    }
-
-    public static double GetAngle(Vector3 from, Vector3 to)
-    {
-        double fromMagni = from.magnitude;
-        //Debug.Log(fromMagni);
-        double toMagni = to.magnitude;
-        // Debug.Log(toMagni);
-        double fromToMagni = (to - from).magnitude;
-        // Debug.Log(fromToMagni);
-        double Angle = (Math.Pow(fromMagni, 2) + Math.Pow(toMagni, 2) - Math.Pow(fromToMagni, 2)) / (2 * fromMagni * toMagni);
-        return (Math.Acos(Angle) * (180 / Math.PI));
-    }
-
-    /// <summary>
-    /// 纬度转墨卡托
-    /// </summary>
-    /// <param name="lat"></param>
-    /// <returns></returns>
-    public static double latToMercator(double lat)
-    {
-        double y = Math.Log(Math.Tan((90 + lat) * Math.PI / 360.00000000d)) / (Math.PI / 180.000000000d);
-        y = y * halfEquatorCircle / 180.0000000000d;
-        return y;
+        return GeoToPoint(lon, lat);
     }
 }

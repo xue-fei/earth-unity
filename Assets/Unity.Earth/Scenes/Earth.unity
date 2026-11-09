@@ -697,7 +697,7 @@ MonoBehaviour:
   m_CaptionImage: {fileID: 0}
   m_ItemText: {fileID: 39850787}
   m_ItemImage: {fileID: 0}
-  m_Value: 0
+  m_Value: 1
   m_Options:
     m_Options:
     - m_Text: ArcGis
@@ -706,7 +706,19 @@ MonoBehaviour:
       m_Image: {fileID: 0}
   m_OnValueChanged:
     m_PersistentCalls:
-      m_Calls: []
+      m_Calls:
+      - m_Target: {fileID: 593400508}
+        m_TargetAssemblyTypeName: EarthManager, Assembly-CSharp
+        m_MethodName: SetChannel
+        m_Mode: 0
+        m_Arguments:
+          m_ObjectArgument: {fileID: 0}
+          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
+          m_IntArgument: 0
+          m_FloatArgument: 0
+          m_StringArgument: 
+          m_BoolArgument: 0
+        m_CallState: 2
   m_AlphaFadeSpeed: 0.15
 --- !u!114 &278043937
 MonoBehaviour:
@@ -1625,6 +1637,9 @@ MonoBehaviour:
   earth: {fileID: 0}
   material: {fileID: 2100000, guid: b86849b2a6c967344966ce2a32324186, type: 2}
   mapLayer: {fileID: 0}
+  satelliteToggle: {fileID: 1586412952}
+  roadToggle: {fileID: 996847555}
+  targetPos: {fileID: 2145262557}
 --- !u!114 &593400509
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2075,7 +2090,7 @@ MonoBehaviour:
     m_HorizontalOverflow: 0
     m_VerticalOverflow: 0
     m_LineSpacing: 1
-  m_Text: ArcGis
+  m_Text: "\u9AD8\u5FB7"
 --- !u!222 &980733487
 CanvasRenderer:
   m_ObjectHideFlags: 0
@@ -2245,7 +2260,19 @@ MonoBehaviour:
   m_Group: {fileID: 0}
   onValueChanged:
     m_PersistentCalls:
-      m_Calls: []
+      m_Calls:
+      - m_Target: {fileID: 593400508}
+        m_TargetAssemblyTypeName: EarthManager, Assembly-CSharp
+        m_MethodName: SetRoadMapVisible
+        m_Mode: 0
+        m_Arguments:
+          m_ObjectArgument: {fileID: 0}
+          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
+          m_IntArgument: 0
+          m_FloatArgument: 0
+          m_StringArgument: 
+          m_BoolArgument: 0
+        m_CallState: 2
   m_IsOn: 1
 --- !u!1 &1166045809
 GameObject:
@@ -2915,7 +2942,7 @@ MonoBehaviour:
     m_HorizontalOverflow: 0
     m_VerticalOverflow: 0
     m_LineSpacing: 1
-  m_Text: "\u9AD8\u5FB7"
+  m_Text: "\u536B\u661F"
 --- !u!222 &1525459072
 CanvasRenderer:
   m_ObjectHideFlags: 0
@@ -3009,7 +3036,19 @@ MonoBehaviour:
   m_Group: {fileID: 0}
   onValueChanged:
     m_PersistentCalls:
-      m_Calls: []
+      m_Calls:
+      - m_Target: {fileID: 593400508}
+        m_TargetAssemblyTypeName: EarthManager, Assembly-CSharp
+        m_MethodName: SetSatelliteVisible
+        m_Mode: 0
+        m_Arguments:
+          m_ObjectArgument: {fileID: 0}
+          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
+          m_IntArgument: 0
+          m_FloatArgument: 0
+          m_StringArgument: 
+          m_BoolArgument: 0
+        m_CallState: 2
   m_IsOn: 1
 --- !u!1 &1617811737
 GameObject:
@@ -3851,11 +3890,25 @@ MonoBehaviour:
   m_Value: 0
   m_Options:
     m_Options:
-    - m_Text: "\u9AD8\u5FB7"
+    - m_Text: "\u536B\u661F"
+      m_Image: {fileID: 0}
+    - m_Text: "\u8DEF\u7F51"
       m_Image: {fileID: 0}
   m_OnValueChanged:
     m_PersistentCalls:
-      m_Calls: []
+      m_Calls:
+      - m_Target: {fileID: 593400508}
+        m_TargetAssemblyTypeName: EarthManager, Assembly-CSharp
+        m_MethodName: SetMapType
+        m_Mode: 0
+        m_Arguments:
+          m_ObjectArgument: {fileID: 0}
+          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
+          m_IntArgument: 0
+          m_FloatArgument: 0
+          m_StringArgument: 
+          m_BoolArgument: 0
+        m_CallState: 2
   m_AlphaFadeSpeed: 0.15
 --- !u!114 &1935157194
 MonoBehaviour:
